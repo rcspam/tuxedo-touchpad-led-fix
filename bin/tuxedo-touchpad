@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# tuxedo-touchpad — control the touchpad, and its disabled-LED, on KDE Wayland
+# tuxedo-touchpad: control the touchpad, and its disabled-LED, on KDE Wayland
 # Copyright (C) 2026 rcspam <rcspams@gmail.com>
 #
 # On Uniwill/TongFang laptops sold by TUXEDO, the small LED in the touchpad's
@@ -429,7 +429,7 @@ def cmd_probe(firmware, seconds):
     else:
         print('KWin    : unreachable')
 
-    print(f'\nWatching for {seconds}s — double-tap the top-left corner now.\n')
+    print(f'\nWatching for {seconds}s. Double-tap the top-left corner now.\n')
     last_report = firmware.read()
     last_kwin = kwin.enabled() if kwin else None
     start = time.time()
@@ -560,7 +560,7 @@ def cmd_check():
         read_back = firmware.read()
         if read_back != PAD_OFF:
             print(f'\nWrote 0x{PAD_OFF:02X} but the device reports '
-                  f'0x{read_back:02X} — it did not take. Stopping here.')
+                  f'0x{read_back:02X}, so it did not take. Stopping here.')
         else:
             time.sleep(5)
     except KeyboardInterrupt:

@@ -4,7 +4,7 @@
 [Why it's broken](#why-its-broken) ·
 [What this does](#what-this-does) ·
 [Install](#install) ·
-[Other machines — run `check`](#every-other-machine) ·
+[Other machines: run `check`](#every-other-machine) ·
 [Use](#use) ·
 [Not covered](#not-covered) ·
 [Credits](#credits)
@@ -87,7 +87,7 @@ Remove everything with `make uninstall`.
 
 I have no idea what a Pulse, a Stellaris, a Gen10 or a non-TUXEDO
 Uniwill/TongFang pad does. Two things vary between models: the hidraw node and
-the **report ID** — mine is 7, yours may not be. The `0x00` / `0x03` values come
+the **report ID**. Mine is 7, yours may not be. The `0x00` / `0x03` values come
 from the Microsoft precision-touchpad spec, so those should hold everywhere.
 
 Rather than have people guess, there's a `check` command that works both of
@@ -113,7 +113,7 @@ result    : LED works
 ```
 
 Open an issue and paste that in, whatever it says. A "LED did NOT light" on a
-Stellaris is worth as much to me as a success — right now that list above has
+Stellaris tells me as much as a success. Right now that list above has
 exactly one machine in it.
 
 ### Is it safe to run on a machine I can't fix remotely?
@@ -126,12 +126,12 @@ hardware. What it does:
 - refuses to write to a report it cannot read back first
 - checks the write actually took effect; if the device reports something else,
   it stops there instead of waiting five seconds
-- restores in a `finally`, so Ctrl-C mid-test brings the pad back — tested by
+- restores in a `finally`, so Ctrl-C mid-test brings the pad back. Tested by
   sending SIGINT during the window
 - refuses to run at all if the daemon is up, since that would undo the test
 - never guesses between several candidate devices, it asks
 
-Needs write access to `/dev/hidraw*` — see `make udev` above if you don't have
+Needs write access to `/dev/hidraw*`. See `make udev` above if you don't have
 `tuxedo-touchpad-switch` installed. It does **not** need PyGObject or a Plasma
 session; only the daemon does. Runs on Python 3.11 and 3.12, both checked.
 
@@ -154,7 +154,7 @@ when the pad is off, they're the same pair of bits.
 
 `on`/`off`/`toggle` go through KWin by default, so everything stays consistent
 and you don't have to stop the daemon. Add `--raw` to write the HID report
-directly — handy from a tty or when diagnosing, but then the daemon will pull
+directly. Handy from a tty or when diagnosing, but then the daemon will pull
 the firmware back in line within two seconds unless you stop it.
 
 ## Not covered

@@ -66,7 +66,7 @@ event13  KEYBOARD_KEY  KEY_F21 (191) released
 ```
 
 `event13` is "TUXEDO Keyboard", the input node created by the tuxedo-drivers
-platform module — not the touchpad. In their source the constant is literally
+platform module, not the touchpad. In their source the constant is literally
 `UNIWILL_OSD_TOUCHPADWORKAROUND`, and there's an `msleep(50)` so userspace can
 tell it apart from the surrounding firmware chatter.
 
@@ -119,7 +119,7 @@ $ busctl --user call org.kde.kded6 /kded org.kde.kded loadedModules | tr ' ' '\n
 (nothing)
 ```
 
-Which matches every report I could find — people on KDE X11 had a working LED,
+Which matches every report I could find. People on KDE X11 had a working LED,
 people on KDE Wayland never did.
 
 ## No signal to hang off
