@@ -6,12 +6,12 @@ UDEVDIR := /usr/lib/udev/rules.d
 .PHONY: install uninstall udev status
 
 install:
-	install -Dm755 bin/tuxedo-touchpad-led $(BINDIR)/tuxedo-touchpad-led
-	install -Dm644 systemd/kde-touchpad-led.service $(UNITDIR)/kde-touchpad-led.service
+	install -Dm755 bin/tuxedo-touchpad $(BINDIR)/tuxedo-touchpad
+	install -Dm644 systemd/tuxedo-touchpad.service $(UNITDIR)/tuxedo-touchpad.service
 	systemctl --user daemon-reload
-	systemctl --user enable --now kde-touchpad-led.service
+	systemctl --user enable --now tuxedo-touchpad.service
 	@echo
-	@$(BINDIR)/tuxedo-touchpad-led status
+	@$(BINDIR)/tuxedo-touchpad status
 
 # Only needed if tuxedo-touchpad-switch is not installed; it ships the same rule.
 udev:
@@ -19,9 +19,9 @@ udev:
 	sudo udevadm control --reload && sudo udevadm trigger
 
 uninstall:
-	-systemctl --user disable --now kde-touchpad-led.service
-	rm -f $(UNITDIR)/kde-touchpad-led.service $(BINDIR)/tuxedo-touchpad-led
+	-systemctl --user disable --now tuxedo-touchpad.service
+	rm -f $(UNITDIR)/tuxedo-touchpad.service $(BINDIR)/tuxedo-touchpad
 	systemctl --user daemon-reload
 
 status:
-	systemctl --user status kde-touchpad-led.service --no-pager
+	systemctl --user status tuxedo-touchpad.service --no-pager

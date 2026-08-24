@@ -1,5 +1,5 @@
 [Unit]
-Description=Mirror KDE's touchpad state onto the Uniwill touchpad disabled-LED
+Description=Mirror KDE's touchpad state onto the Uniwill touchpad firmware
 Documentation=https://github.com/rcspam/tuxedo-touchpad-led-fix
 PartOf=graphical-session.target
 After=plasma-kwin_wayland.service
@@ -11,7 +11,7 @@ ConditionEnvironment=XDG_SESSION_TYPE=wayland
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/tuxedo-touchpad-led daemon
+ExecStart=%h/.local/bin/tuxedo-touchpad daemon
 Restart=on-failure
 RestartSec=5
 Slice=session.slice

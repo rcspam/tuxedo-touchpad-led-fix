@@ -18,7 +18,7 @@ That's one laptop and one touchpad revision. A Pulse, a Stellaris, a Gen10 or a
 non-TUXEDO Uniwill/TongFang machine may well behave differently, and I have no
 way to check. The tool looks up the hidraw node and the switch report ID at
 runtime instead of hard-coding them, so it has a decent chance of travelling —
-but that's an argument, not evidence. Run `tuxedo-touchpad-led probe` first, and
+but that's an argument, not evidence. Run `tuxedo-touchpad probe` first, and
 tell me how it went either way.
 
 ## Why it's broken
@@ -79,12 +79,15 @@ Remove everything with `make uninstall`.
 ## Use
 
 ```
-tuxedo-touchpad-led status         # LED, firmware, KWin, service
-tuxedo-touchpad-led on             # light the LED, disable the pad
-tuxedo-touchpad-led off
-tuxedo-touchpad-led toggle
-tuxedo-touchpad-led probe          # watch the reports while you tap the corner
+tuxedo-touchpad status         # touchpad, LED, KWin, service
+tuxedo-touchpad off            # disable the touchpad, light comes on
+tuxedo-touchpad on             # enable it again, light goes out
+tuxedo-touchpad toggle
+tuxedo-touchpad probe          # watch the reports while you tap the corner
 ```
+
+`on` and `off` are about the touchpad, not the LED. The light is lit exactly
+when the pad is off, they're the same pair of bits.
 
 `on`/`off`/`toggle` go through KWin by default, so everything stays consistent
 and you don't have to stop the daemon. Add `--raw` to write the HID report

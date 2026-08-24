@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# tuxedo-touchpad-led — make the touchpad disabled-LED work on KDE Plasma Wayland
+# tuxedo-touchpad — control the touchpad, and its disabled-LED, on KDE Wayland
 # Copyright (C) 2026 rcspam <rcspams@gmail.com>
 #
 # On Uniwill/TongFang laptops sold by TUXEDO, the small LED in the touchpad's
@@ -18,12 +18,15 @@
 # firmware. See docs/FINDINGS.md for how each step was established.
 
 """Usage:
-  tuxedo-touchpad-led daemon            mirror KWin's touchpad state to the LED
-  tuxedo-touchpad-led on [--raw]        light the LED (disables the touchpad)
-  tuxedo-touchpad-led off [--raw]       clear the LED (enables the touchpad)
-  tuxedo-touchpad-led toggle [--raw]    flip whichever state is current
-  tuxedo-touchpad-led status            show LED, firmware, KWin and service state
-  tuxedo-touchpad-led probe [SECONDS]   watch the feature reports, for diagnosis
+  tuxedo-touchpad daemon            mirror KWin's touchpad state to the firmware
+  tuxedo-touchpad on [--raw]        enable the touchpad (LED goes off)
+  tuxedo-touchpad off [--raw]       disable the touchpad (LED comes on)
+  tuxedo-touchpad toggle [--raw]    flip whichever state is current
+  tuxedo-touchpad status            show touchpad, LED, KWin and service state
+  tuxedo-touchpad probe [SECONDS]   watch the feature reports, for diagnosis
+
+on and off refer to the touchpad, not to the LED. The light comes on when the
+touchpad goes off: on this hardware they are the same pair of bits.
 
 By default on/off/toggle go through KWin, so System Settings, the corner
 double-tap and this command all agree and the daemon needs no special casing.
@@ -41,7 +44,8 @@ import time
 # --- device constants ------------------------------------------------------
 
 HID_PHYS_MATCH = 'UNIW0001'      # Uniwill I2C touchpad
-LED_ON, LED_OFF = 0x00, 0x03     # value written to the switch report
+# Switch report values. The LED is lit exactly when the pad is off.
+PAD_OFF, PAD_ON = 0x00, 0x03
 
 USAGE_PAGE_DIGITIZER = 0x0D
 USAGE_SURFACE_SWITCH = 0x57
@@ -51,7 +55,7 @@ POLL_SECONDS = 2
 WAIT_ATTEMPTS, WAIT_INTERVAL = 10, 1.5   # let KWin appear at session start
 
 KCMINPUTRC = os.path.expanduser('~/.config/kcminputrc')
-SERVICE = 'kde-touchpad-led.service'
+SERVICE = 'tuxedo-touchpad.service'
 
 
 def _ioc_set(length):
@@ -181,7 +185,7 @@ class Firmware:
         return False
 
     def apply(self, touchpad_enabled):
-        return self.write(LED_OFF if touchpad_enabled else LED_ON)
+        return self.write(PAD_ON if touchpad_enabled else PAD_OFF)
 
 
 # --- compositor ------------------------------------------------------------
@@ -324,10 +328,11 @@ def service_state():
 
 def cmd_status(firmware):
     value = firmware.read()
-    lit = value == LED_ON
+    lit = value == PAD_OFF
     print(f'device     : {firmware.devnode}, switch report {firmware.report_id}')
-    print(f'LED        : {"on" if lit else "off"} (report value 0x{value:02X})')
-    print(f'touchpad   : {"disabled" if lit else "enabled"} at the firmware level')
+    print(f'touchpad   : {"off" if lit else "on"} at the firmware level '
+          f'(report value 0x{value:02X})')
+    print(f'LED        : {"on" if lit else "off"}')
     kwin = try_kwin()
     if kwin:
         print(f'KWin       : touchpad {"enabled" if kwin.enabled() else "disabled"}')
@@ -338,22 +343,23 @@ def cmd_status(firmware):
 
 
 def cmd_set(firmware, action, raw):
+    """action is about the touchpad: 'on' enables it, which puts the LED out."""
     if action == 'toggle':
-        action = 'off' if firmware.read() == LED_ON else 'on'
-    led_on = action == 'on'
+        action = 'on' if firmware.read() == PAD_OFF else 'off'
+    enable = action == 'on'
 
     if not raw:
         kwin = try_kwin()
         if kwin:
-            kwin.set_enabled(not led_on)      # LED lit  <=>  touchpad disabled
-            print(f'KWin: touchpad {"disabled" if led_on else "enabled"}; '
-                  f'the daemon turns the LED {"on" if led_on else "off"}')
+            kwin.set_enabled(enable)
+            print(f'KWin: touchpad {"enabled" if enable else "disabled"}; '
+                  f'the daemon turns the LED {"off" if enable else "on"}')
             return 0
         print('KWin unreachable, writing the HID report directly', file=sys.stderr)
 
-    firmware.write(LED_ON if led_on else LED_OFF)
+    firmware.apply(enable)
     print(f'firmware: report {firmware.report_id} = 0x{firmware.read():02X} '
-          f'(LED {"on" if led_on else "off"})')
+          f'(touchpad {"on" if enable else "off"}, LED {"off" if enable else "on"})')
     if not raw and service_state() == 'active':
         print(f'note: {SERVICE} is running and will realign within '
               f'{POLL_SECONDS}s', file=sys.stderr)
@@ -401,8 +407,8 @@ def cmd_probe(firmware, seconds):
     print(f'\n{changes} change(s).')
     if changes == 0:
         print('The gesture reached neither the firmware nor the compositor.')
-    if firmware.read() != LED_OFF:
-        firmware.write(LED_OFF)
+    if firmware.read() != PAD_ON:
+        firmware.write(PAD_ON)
         print('Touchpad restored.')
     return 0
 
