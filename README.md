@@ -6,10 +6,20 @@ laptops with a Uniwill touchpad.
 You double-tap the top-left corner, the touchpad goes off, you get the OSD, and
 the little light stays dark. That's what this fixes.
 
-Tested on an InfinityBook Pro Gen8 (MK2), board `PH6PG01_PH6PG71`, TUXEDO OS,
-kernel 7.0.0-108029-tuxedo, Plasma 6.6.5 on Wayland. Other Uniwill pads should
-work — the tool finds the device and the right HID report on its own — but I
-only have the one machine, so reports welcome.
+## Tested on exactly one machine
+
+- TUXEDO InfinityBook Pro Gen8 (MK2), board `PH6PG01_PH6PG71`
+- Touchpad `UNIW0001:00 093A:0274`, I2C, driven by `hid-multitouch`
+- TUXEDO OS, kernel 7.0.0-108029-tuxedo
+- Plasma 6.6.5 on Wayland
+- tuxedo-drivers 4.22.3, tuxedo-touchpad-switch 1.1.0
+
+That's one laptop and one touchpad revision. A Pulse, a Stellaris, a Gen10 or a
+non-TUXEDO Uniwill/TongFang machine may well behave differently, and I have no
+way to check. The tool looks up the hidraw node and the switch report ID at
+runtime instead of hard-coding them, so it has a decent chance of travelling —
+but that's an argument, not evidence. Run `tuxedo-touchpad-led probe` first, and
+tell me how it went either way.
 
 ## Why it's broken
 
