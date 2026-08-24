@@ -114,6 +114,18 @@ gone from the package; if you know, tell me.
 GNOME, Budgie, tty. GNOME on X11 is still handled by the official package.
 GNOME on Wayland is in the same hole KDE was, but I can't test it.
 
+## Credits
+
+Diagnosed and written with Claude (Anthropic), in about a quarter of an hour of
+actual work: reading the HID report descriptor, tracing the corner tap through
+libinput to KWin, digging up the commit that removed KDE support, and writing
+the daemon.
+
+`Xartos/tuxedo-touchpad-switch`, branch `add-touchpad-toggle-update`, got to a
+standalone toggle binary two years earlier. Different approach, same problem.
+
+The udev rule is TUXEDO's, from `tuxedo-touchpad-switch`.
+
 ## Licence
 
 GPL-3.0-or-later. The udev rule is TUXEDO's, from `tuxedo-touchpad-switch`,
