@@ -6,6 +6,15 @@ laptops with a Uniwill touchpad.
 You double-tap the top-left corner, the touchpad goes off, you get the OSD, and
 the little light stays dark. That's what this fixes.
 
+[My hardware](#the-machine-i-have) ·
+[Other machines — run `check`](#every-other-machine) ·
+[Why it's broken](#why-its-broken) ·
+[What this does](#what-this-does) ·
+[Install](#install) ·
+[Use](#use) ·
+[Not covered](#not-covered) ·
+[Credits](#credits)
+
 ## The machine I have
 
 Everything here was measured and tested on one laptop:
