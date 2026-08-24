@@ -61,10 +61,27 @@ Open an issue and paste that in, whatever it says. A "LED did NOT light" on a
 Stellaris is worth as much to me as a success — right now that list above has
 exactly one machine in it.
 
-Two caveats: stop the daemon first if you already installed it (`check` refuses
-to run otherwise, it would undo its own test within two seconds), and you need
-write access to `/dev/hidraw*` — see `make udev` below if you don't have
-`tuxedo-touchpad-switch` installed.
+### Is it safe to run on a machine I can't fix remotely?
+
+That was the main thing on my mind writing it, since I can't test on your
+hardware. What it does:
+
+- reads the current value of the report **before** touching anything, and
+  restores that exact value rather than assuming a default
+- refuses to write to a report it cannot read back first
+- checks the write actually took effect; if the device reports something else,
+  it stops there instead of waiting five seconds
+- restores in a `finally`, so Ctrl-C mid-test brings the pad back — tested by
+  sending SIGINT during the window
+- refuses to run at all if the daemon is up, since that would undo the test
+- never guesses between several candidate devices, it asks
+
+Needs write access to `/dev/hidraw*` — see `make udev` below if you don't have
+`tuxedo-touchpad-switch` installed. It does **not** need PyGObject or a Plasma
+session; only the daemon does. Runs on Python 3.11 and 3.12, both checked.
+
+Worst case, if something goes really wrong: `python3 tuxedo-touchpad on --raw`
+turns the pad back on, and a reboot resets the firmware anyway.
 
 ## Why it's broken
 

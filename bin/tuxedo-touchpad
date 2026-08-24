@@ -91,7 +91,11 @@ def find_touchpads():
     string in advance.
     """
     found = []
-    for node in sorted(os.listdir('/sys/class/hidraw')):
+    try:
+        nodes = sorted(os.listdir('/sys/class/hidraw'))
+    except OSError:
+        return found
+    for node in nodes:
         syspath = f'/sys/class/hidraw/{node}/device'
         report_id = find_switch_report(syspath)
         if report_id is None:
@@ -141,6 +145,9 @@ def find_switch_report(syspath):
     pending = set()
     while index < len(descriptor):
         prefix = descriptor[index]
+        if prefix == 0xFE:                   # long item: [prefix][size][tag][data]
+            index += 3 + (descriptor[index + 1] if index + 1 < len(descriptor) else 0)
+            continue
         size = prefix & 3
         size = 4 if size == 3 else size
         item_type = (prefix >> 2) & 3
@@ -261,7 +268,8 @@ class KWin:
         for line in xml.splitlines():
             if '<node name=' not in line:
                 continue
-            path = f"{self.ROOT}/{line.split('\"')[1]}"
+            node = line.split('"')[1]
+            path = f'{self.ROOT}/{node}'
             try:
                 name = self.get(path, 'name')
             except self.GLib.Error:
@@ -451,11 +459,30 @@ def cmd_probe(firmware, seconds):
     return 0
 
 
-def cmd_check():
-    """Guided compatibility test, for people on hardware I cannot test.
+def _pick_pad(pads):
+    """More than one candidate: never guess, the wrong one could be a screen."""
+    if len(pads) == 1:
+        return pads[0]
+    print('\nSeveral candidates. Pick the one that is your touchpad:')
+    for i, pad in enumerate(pads, 1):
+        print(f"  {i}) {pad['devnode']}  report {pad['report_id']}  "
+              f"{pad['name']}  ({pad['phys']})")
+    try:
+        choice = int(input(f'Number [1-{len(pads)}]: ').strip())
+    except (ValueError, EOFError, KeyboardInterrupt):
+        return None
+    return pads[choice - 1] if 1 <= choice <= len(pads) else None
 
-    Prints a block meant to be pasted into an issue or a forum post, whatever
-    the outcome. A clean "does not work here" report is as useful as a good one.
+
+def cmd_check():
+    """Guided compatibility test, for hardware I cannot test myself.
+
+    Prints a block meant to be pasted into an issue, whatever the outcome. A
+    clean "does not work here" is as useful as a success.
+
+    The touchpad must come back no matter what happens in between, so the
+    original report value is saved first and restored in a finally block,
+    including on Ctrl-C.
     """
     def machine():
         out = {}
@@ -466,24 +493,25 @@ def cmd_check():
                     out[key] = handle.read().strip()
             except OSError:
                 out[key] = '?'
-        # "TUXEDO" + "TUXEDO InfinityBook ..." reads badly
         if out['product'].startswith(out['vendor']):
             out['vendor'] = ''
         return out
 
     dmi = machine()
-    pads = find_touchpads()
+    name = ' '.join(filter(None, (dmi['vendor'], dmi['product'])))
+    session = (f"{os.environ.get('XDG_SESSION_TYPE', '?')} / "
+               f"{os.environ.get('XDG_CURRENT_DESKTOP', '?')}")
 
-    print(f"machine : {' '.join(filter(None, (dmi['vendor'], dmi['product'])))}, "
-          f"board {dmi['board']}")
+    print(f'machine : {name}, board {dmi["board"]}')
     print(f'kernel  : {os.uname().release}')
-    print(f"session : {os.environ.get('XDG_SESSION_TYPE', '?')} / "
-          f"{os.environ.get('XDG_CURRENT_DESKTOP', '?')}")
+    print(f'session : {session}')
+    print(f'python  : {sys.version.split()[0]}')
 
+    pads = find_touchpads()
     if not pads:
         print('\nNo touchpad exposes a Surface/Button Switch feature report.')
         print('Either this is not a precision touchpad, or your user cannot read')
-        print('/sys/class/hidraw/*/device/report_descriptor. Nothing to try here.')
+        print('/sys/class/hidraw/*/device/report_descriptor.')
         return 1
 
     print(f'\n{len(pads)} candidate touchpad(s):')
@@ -491,62 +519,86 @@ def cmd_check():
         print(f"  {pad['devnode']}  report {pad['report_id']}  "
               f"{pad['name']}  ({pad['phys']})")
 
-    pad = pads[0]
-    try:
-        fd = os.open(pad['devnode'], os.O_WRONLY | os.O_NONBLOCK)
-        os.close(fd)
-    except OSError as err:
-        print(f"\nCannot write to {pad['devnode']}: {err}")
-        print('Install the udev rule (make udev) and replug or reboot, then retry.')
-        return 1
-
-    firmware = Firmware(pad['devnode'], pad['syspath'])
-    if firmware.fd is None:
-        print('\nCould not open the touchpad.')
-        return 1
-
     if service_state() == 'active':
         print(f'\n{SERVICE} is running and would undo the test within '
               f'{POLL_SECONDS}s.')
         print(f'Stop it first:  systemctl --user stop {SERVICE}')
         return 1
 
-    print(f"\nAbout to disable {firmware.devnode} for 5 seconds using report "
-          f'{firmware.report_id}.')
-    print('Watch the top-left corner of the touchpad. The pointer will stop')
-    print('moving; the keyboard still works and it restores itself.')
+    pad = _pick_pad(pads)
+    if pad is None:
+        print('\naborted')
+        return 1
+
+    firmware = Firmware(pad['devnode'], pad['syspath'])
+    if firmware.fd is None:
+        print(f"\nCannot open {pad['devnode']} for writing.")
+        print('You need write access to /dev/hidraw*: install the udev rule')
+        print('(make udev) then replug or reboot, and try again.')
+        return 1
+
+    original = firmware.read()
+    if original is None:
+        print(f"\nCannot read report {firmware.report_id} back from "
+              f'{firmware.devnode}.')
+        print('Refusing to write to a report I cannot verify.')
+        return 1
+    print(f'\ncurrent value of report {firmware.report_id}: 0x{original:02X}')
+
+    print(f'\nAbout to disable {firmware.devnode} for 5 seconds.')
+    print('Watch the top-left corner of the touchpad. The pointer stops moving;')
+    print('the keyboard keeps working and it restores itself, Ctrl-C included.')
     try:
         input('Press Enter when you are ready, Ctrl-C to abort. ')
     except (EOFError, KeyboardInterrupt):
         print('\naborted')
         return 1
 
-    firmware.apply(False)
-    read_back = firmware.read()
-    time.sleep(5)
-    firmware.apply(True)
-    restored = firmware.read()
-
-    print(f'\nwrote 0x{PAD_OFF:02X}, read back 0x{read_back:02X}, '
-          f'restored to 0x{restored:02X}')
-    if restored != PAD_ON:
-        print('WARNING: the touchpad did not come back. Run: tuxedo-touchpad on --raw')
-
+    read_back = None
     try:
-        answer = input('Did the LED light up? [y/n] ').strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        answer = '?'
-    verdict = {'y': 'LED works', 'n': 'LED did NOT light'}.get(answer[:1], 'unclear')
+        firmware.apply(False)
+        read_back = firmware.read()
+        if read_back != PAD_OFF:
+            print(f'\nWrote 0x{PAD_OFF:02X} but the device reports '
+                  f'0x{read_back:02X} — it did not take. Stopping here.')
+        else:
+            time.sleep(5)
+    except KeyboardInterrupt:
+        print('\ninterrupted')
+    finally:
+        firmware.write(original)
+        restored = firmware.read()
+
+    if restored != original:
+        print(f'\nWARNING: could not restore report {firmware.report_id} '
+              f'(0x{restored:02X} instead of 0x{original:02X}).')
+        print(f'Run: python3 {sys.argv[0]} on --raw')
+    else:
+        print(f'\nrestored to 0x{restored:02X}')
+
+    if read_back != PAD_OFF:
+        verdict = 'write did NOT take'
+        answer = ''
+    else:
+        try:
+            answer = input('Did the LED light up? [y/n] ').strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = ''
+        verdict = {'y': 'LED works',
+                   'n': 'LED did NOT light'}.get(answer[:1], 'unclear')
+
+    written = f'0x{PAD_OFF:02X} -> read back ' + (
+        f'0x{read_back:02X}' if read_back is not None else 'unreadable')
 
     print('\n--- copy everything below into an issue or a comment ---')
-    print(f"machine   : {' '.join(filter(None, (dmi['vendor'], dmi['product'])))}, "
-          f"board {dmi['board']}")
+    print(f'machine   : {name}, board {dmi["board"]}')
     print(f'kernel    : {os.uname().release}')
-    print(f"session   : {os.environ.get('XDG_SESSION_TYPE', '?')} / "
-          f"{os.environ.get('XDG_CURRENT_DESKTOP', '?')}")
+    print(f'session   : {session}')
+    print(f'python    : {sys.version.split()[0]}')
     print(f"touchpad  : {pad['name']} ({pad['phys']})")
     print(f'report ID : {firmware.report_id}')
-    print(f'write     : 0x{PAD_OFF:02X} -> read back 0x{read_back:02X}')
+    print(f'original  : 0x{original:02X}')
+    print(f'write     : {written}')
     print(f'result    : {verdict}')
     print('--- end ---')
     return 0 if answer[:1] == 'y' else 1
