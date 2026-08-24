@@ -6,20 +6,56 @@ laptops with a Uniwill touchpad.
 You double-tap the top-left corner, the touchpad goes off, you get the OSD, and
 the little light stays dark. That's what this fixes.
 
-## Tested on exactly one machine
+## The machine I have
+
+Everything here was measured and tested on one laptop:
 
 - TUXEDO InfinityBook Pro Gen8 (MK2), board `PH6PG01_PH6PG71`
 - Touchpad `UNIW0001:00 093A:0274`, I2C, driven by `hid-multitouch`
+- HID switch report **7**
 - TUXEDO OS, kernel 7.0.0-108029-tuxedo
 - Plasma 6.6.5 on Wayland
 - tuxedo-drivers 4.22.3, tuxedo-touchpad-switch 1.1.0
 
-That's one laptop and one touchpad revision. A Pulse, a Stellaris, a Gen10 or a
-non-TUXEDO Uniwill/TongFang machine may well behave differently, and I have no
-way to check. The tool looks up the hidraw node and the switch report ID at
-runtime instead of hard-coding them, so it has a decent chance of travelling —
-but that's an argument, not evidence. Run `tuxedo-touchpad check` first — see
-below — and tell me how it went either way.
+One laptop, one touchpad revision. That's the whole of my evidence.
+
+## Every other machine
+
+I have no idea what a Pulse, a Stellaris, a Gen10 or a non-TUXEDO
+Uniwill/TongFang pad does. Two things vary between models: the hidraw node and
+the **report ID** — mine is 7, yours may not be. The `0x00` / `0x03` values come
+from the Microsoft precision-touchpad spec, so those should hold everywhere.
+
+Rather than have people guess, there's a `check` command that works both of
+them out on its own. No install, one file:
+
+```
+curl -O https://raw.githubusercontent.com/rcspam/tuxedo-touchpad-led-fix/master/bin/tuxedo-touchpad
+python3 tuxedo-touchpad check
+```
+
+It scans every hidraw node for a Surface/Button Switch report, finds the report
+ID, disables the pad for five seconds so you can watch the corner, puts it
+back, then prints this:
+
+```
+machine   : TUXEDO InfinityBook Pro Gen8 (MK2), board PH6PG01_PH6PG71
+kernel    : 7.0.0-108029-tuxedo
+session   : wayland / KDE
+touchpad  : UNIW0001:00 (i2c-UNIW0001:00)
+report ID : 7
+write     : 0x00 -> read back 0x00
+result    : LED works
+```
+
+Open an issue and paste that in, whatever it says. A "LED did NOT light" on a
+Stellaris is worth as much to me as a success — right now that list above has
+exactly one machine in it.
+
+Two caveats: stop the daemon first if you already installed it (`check` refuses
+to run otherwise, it would undo its own test within two seconds), and you need
+write access to `/dev/hidraw*` — see `make udev` below if you don't have
+`tuxedo-touchpad-switch` installed.
 
 ## Why it's broken
 
@@ -39,11 +75,11 @@ the repo hasn't been touched since. The check in 1.1.0 is now `GNOME && x11`,
 so on KDE it prints `Your desktop environment is not supported.` and exits in
 about 13 ms, every login.
 
-The "fixed differently" part refers to the xkeyboard-config work that made the
+That "fixed differently" refers to the xkeyboard-config work that made the
 toggle key behave on Wayland. That did get fixed. It just has nothing to do
 with the LED.
 
-Long version, with how each step was actually established:
+Long version, with how each step was established and what I ruled out:
 [docs/FINDINGS.md](docs/FINDINGS.md).
 
 ## What this does
@@ -84,6 +120,7 @@ tuxedo-touchpad off            # disable the touchpad, light comes on
 tuxedo-touchpad on             # enable it again, light goes out
 tuxedo-touchpad toggle
 tuxedo-touchpad probe          # watch the reports while you tap the corner
+tuxedo-touchpad check          # the compatibility test described above
 ```
 
 `on` and `off` are about the touchpad, not the LED. The light is lit exactly
@@ -93,40 +130,6 @@ when the pad is off, they're the same pair of bits.
 and you don't have to stop the daemon. Add `--raw` to write the HID report
 directly — handy from a tty or when diagnosing, but then the daemon will pull
 the firmware back in line within two seconds unless you stop it.
-
-## On other hardware — run `check` first
-
-If you have a Pulse, a Stellaris, a Gen10 or any other Uniwill pad, you don't
-need to install anything to find out whether this can work. Grab the one file
-and run it:
-
-```
-curl -O https://raw.githubusercontent.com/rcspam/tuxedo-touchpad-led-fix/master/bin/tuxedo-touchpad
-python3 tuxedo-touchpad check
-```
-
-It scans every hidraw node for a Surface/Button Switch report, finds the report
-ID on its own, disables the pad for five seconds so you can watch the corner,
-puts it back, and prints a block like this:
-
-```
-machine   : TUXEDO InfinityBook Pro Gen8 (MK2), board PH6PG01_PH6PG71
-kernel    : 7.0.0-108029-tuxedo
-session   : wayland / KDE
-touchpad  : UNIW0001:00 (i2c-UNIW0001:00)
-report ID : 7
-write     : 0x00 -> read back 0x00
-result    : LED works
-```
-
-Paste that into an issue here, whatever it says. "LED did NOT light" on a
-Stellaris is just as useful to me as a success — it's the only way this grows
-past the one machine I own.
-
-Two things to know: the daemon has to be stopped for the test (`check` refuses
-to run otherwise, it would undo itself within two seconds), and you need write
-access to `/dev/hidraw*`, which means `make udev` if you don't have
-`tuxedo-touchpad-switch` installed.
 
 ## Not covered
 
