@@ -26,7 +26,7 @@ Everything here was measured and tested on one laptop:
 - Plasma 6.6.5 on Wayland
 - tuxedo-drivers 4.22.3, tuxedo-touchpad-switch 1.1.0
 
-One laptop, one touchpad revision. That's the whole of my evidence.
+So one laptop and one touchpad revision, which is not much to go on.
 
 ## Why it's broken
 
@@ -47,8 +47,8 @@ so on KDE it prints `Your desktop environment is not supported.` and exits in
 about 13 ms, every login.
 
 That "fixed differently" refers to the xkeyboard-config work that made the
-toggle key behave on Wayland. That did get fixed. It just has nothing to do
-with the LED.
+toggle key behave on Wayland, which did get fixed. It has no bearing on the
+LED though, since nothing in xkeyboard-config talks to the touchpad firmware.
 
 Long version, with how each step was established and what I ruled out:
 [docs/FINDINGS.md](docs/FINDINGS.md).
@@ -56,8 +56,8 @@ Long version, with how each step was established and what I ruled out:
 ## What this does
 
 A small daemon reads KWin's own view of the touchpad over D-Bus and writes it
-into the firmware. That's it. The LED then follows the corner tap, the Fn key
-and the System Settings toggle, because all three end up in the same place.
+into the firmware. The LED then follows the corner tap, the Fn key and the
+System Settings toggle, since all three end up in the same place.
 
 It mirrors state rather than remembering it, so it can't drift out of sync: it
 resyncs at startup and every couple of seconds. Kill it and the touchpad comes
@@ -71,8 +71,9 @@ Needs Python 3, PyGObject (`python3-gi`), and a Plasma Wayland session.
 make install
 ```
 
-Installs to `~/.local/bin`, enables a systemd user service, prints the state.
-No root, no system files.
+Installs to `~/.local/bin`, enables a systemd user service and prints the
+resulting state. Nothing goes outside your home directory and it never asks
+for root.
 
 If you don't have `tuxedo-touchpad-switch` installed, you also need the udev
 rule so your user can write to the hidraw node:
@@ -90,8 +91,8 @@ Uniwill/TongFang pad does. Two things vary between models: the hidraw node and
 the **report ID**. Mine is 7, yours may not be. The `0x00` / `0x03` values come
 from the Microsoft precision-touchpad spec, so those should hold everywhere.
 
-Rather than have people guess, there's a `check` command that works both of
-them out on its own. No install, one file:
+So instead of making people guess, `check` works both of them out by itself.
+One file, nothing to install:
 
 ```
 curl -O https://raw.githubusercontent.com/rcspam/tuxedo-touchpad-led-fix/master/bin/tuxedo-touchpad
@@ -118,18 +119,19 @@ exactly one machine in it.
 
 ### Is it safe to run on a machine I can't fix remotely?
 
-That was the main thing on my mind writing it, since I can't test on your
-hardware. What it does:
+That was the thing I worried about most, since I can't test on your hardware
+and a dead touchpad is a miserable thing to debug with only a keyboard.
 
-- reads the current value of the report **before** touching anything, and
-  restores that exact value rather than assuming a default
-- refuses to write to a report it cannot read back first
-- checks the write actually took effect; if the device reports something else,
-  it stops there instead of waiting five seconds
-- restores in a `finally`, so Ctrl-C mid-test brings the pad back. Tested by
-  sending SIGINT during the window
-- refuses to run at all if the daemon is up, since that would undo the test
-- never guesses between several candidate devices, it asks
+Before it writes anything it reads the report back, and it refuses to touch a
+report it couldn't read. Whatever value was there gets saved and put back at
+the end, rather than assuming yours started at the same 0x03 mine did. The
+restore sits in a `finally`, so an interrupted test still gives you your
+touchpad back. I checked that by sending SIGINT halfway through the window.
+
+After writing it reads again to confirm the device actually accepted it, and
+gives up early if it didn't. If several devices look like candidates it asks
+you which one instead of picking. And it won't start at all while the daemon
+is running, because the daemon would quietly undo the test two seconds in.
 
 Needs write access to `/dev/hidraw*`. See `make udev` above if you don't have
 `tuxedo-touchpad-switch` installed. It does **not** need PyGObject or a Plasma
@@ -174,7 +176,7 @@ libinput to KWin, digging up the commit that removed KDE support, and writing
 the daemon.
 
 `Xartos/tuxedo-touchpad-switch`, branch `add-touchpad-toggle-update`, got to a
-standalone toggle binary two years earlier. Different approach, same problem.
+standalone toggle binary two years before I did, going about it differently.
 
 ## Licence
 

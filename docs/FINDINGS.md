@@ -83,7 +83,8 @@ Measured during two taps:
 report 7 : never changed
 ```
 
-The compositor knows. The firmware doesn't. That's the whole bug.
+The compositor knows all about it and the firmware never hears a word, which
+is the entire bug.
 
 ## Why the official package does nothing on KDE
 
@@ -141,9 +142,9 @@ reactivation gesture on Uniwill pads. Not the problem here: report 8 reads
 
 **The mainline `uniwill-laptop` driver.** It's present in this kernel and the
 board is in its DMI aliases, but it only exposes `fn_lock`,
-`super_key_enable`, `touchpad_toggle_enable` and the lightbar. No touchpad LED.
-It isn't even loaded, since the tuxedo-drivers DKMS stack claims the hardware
-first.
+`super_key_enable`, `touchpad_toggle_enable` and the lightbar, with nothing for
+the touchpad LED. It isn't even loaded anyway, since the tuxedo-drivers DKMS
+stack claims the hardware first.
 
 ## Still open
 
