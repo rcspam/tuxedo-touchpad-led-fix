@@ -1,10 +1,10 @@
 # tuxedo-touchpad-led-fix
 
 [My hardware](#the-machine-i-have) ·
-[Other machines — run `check`](#every-other-machine) ·
 [Why it's broken](#why-its-broken) ·
 [What this does](#what-this-does) ·
 [Install](#install) ·
+[Other machines — run `check`](#every-other-machine) ·
 [Use](#use) ·
 [Not covered](#not-covered) ·
 [Credits](#credits)
@@ -27,61 +27,6 @@ Everything here was measured and tested on one laptop:
 - tuxedo-drivers 4.22.3, tuxedo-touchpad-switch 1.1.0
 
 One laptop, one touchpad revision. That's the whole of my evidence.
-
-## Every other machine
-
-I have no idea what a Pulse, a Stellaris, a Gen10 or a non-TUXEDO
-Uniwill/TongFang pad does. Two things vary between models: the hidraw node and
-the **report ID** — mine is 7, yours may not be. The `0x00` / `0x03` values come
-from the Microsoft precision-touchpad spec, so those should hold everywhere.
-
-Rather than have people guess, there's a `check` command that works both of
-them out on its own. No install, one file:
-
-```
-curl -O https://raw.githubusercontent.com/rcspam/tuxedo-touchpad-led-fix/master/bin/tuxedo-touchpad
-python3 tuxedo-touchpad check
-```
-
-It scans every hidraw node for a Surface/Button Switch report, finds the report
-ID, disables the pad for five seconds so you can watch the corner, puts it
-back, then prints this:
-
-```
-machine   : TUXEDO InfinityBook Pro Gen8 (MK2), board PH6PG01_PH6PG71
-kernel    : 7.0.0-108029-tuxedo
-session   : wayland / KDE
-touchpad  : UNIW0001:00 (i2c-UNIW0001:00)
-report ID : 7
-write     : 0x00 -> read back 0x00
-result    : LED works
-```
-
-Open an issue and paste that in, whatever it says. A "LED did NOT light" on a
-Stellaris is worth as much to me as a success — right now that list above has
-exactly one machine in it.
-
-### Is it safe to run on a machine I can't fix remotely?
-
-That was the main thing on my mind writing it, since I can't test on your
-hardware. What it does:
-
-- reads the current value of the report **before** touching anything, and
-  restores that exact value rather than assuming a default
-- refuses to write to a report it cannot read back first
-- checks the write actually took effect; if the device reports something else,
-  it stops there instead of waiting five seconds
-- restores in a `finally`, so Ctrl-C mid-test brings the pad back — tested by
-  sending SIGINT during the window
-- refuses to run at all if the daemon is up, since that would undo the test
-- never guesses between several candidate devices, it asks
-
-Needs write access to `/dev/hidraw*` — see `make udev` below if you don't have
-`tuxedo-touchpad-switch` installed. It does **not** need PyGObject or a Plasma
-session; only the daemon does. Runs on Python 3.11 and 3.12, both checked.
-
-Worst case, if something goes really wrong: `python3 tuxedo-touchpad on --raw`
-turns the pad back on, and a reboot resets the firmware anyway.
 
 ## Why it's broken
 
@@ -137,6 +82,61 @@ make udev
 ```
 
 Remove everything with `make uninstall`.
+
+## Every other machine
+
+I have no idea what a Pulse, a Stellaris, a Gen10 or a non-TUXEDO
+Uniwill/TongFang pad does. Two things vary between models: the hidraw node and
+the **report ID** — mine is 7, yours may not be. The `0x00` / `0x03` values come
+from the Microsoft precision-touchpad spec, so those should hold everywhere.
+
+Rather than have people guess, there's a `check` command that works both of
+them out on its own. No install, one file:
+
+```
+curl -O https://raw.githubusercontent.com/rcspam/tuxedo-touchpad-led-fix/master/bin/tuxedo-touchpad
+python3 tuxedo-touchpad check
+```
+
+It scans every hidraw node for a Surface/Button Switch report, finds the report
+ID, disables the pad for five seconds so you can watch the corner, puts it
+back, then prints this:
+
+```
+machine   : TUXEDO InfinityBook Pro Gen8 (MK2), board PH6PG01_PH6PG71
+kernel    : 7.0.0-108029-tuxedo
+session   : wayland / KDE
+touchpad  : UNIW0001:00 (i2c-UNIW0001:00)
+report ID : 7
+write     : 0x00 -> read back 0x00
+result    : LED works
+```
+
+Open an issue and paste that in, whatever it says. A "LED did NOT light" on a
+Stellaris is worth as much to me as a success — right now that list above has
+exactly one machine in it.
+
+### Is it safe to run on a machine I can't fix remotely?
+
+That was the main thing on my mind writing it, since I can't test on your
+hardware. What it does:
+
+- reads the current value of the report **before** touching anything, and
+  restores that exact value rather than assuming a default
+- refuses to write to a report it cannot read back first
+- checks the write actually took effect; if the device reports something else,
+  it stops there instead of waiting five seconds
+- restores in a `finally`, so Ctrl-C mid-test brings the pad back — tested by
+  sending SIGINT during the window
+- refuses to run at all if the daemon is up, since that would undo the test
+- never guesses between several candidate devices, it asks
+
+Needs write access to `/dev/hidraw*` — see `make udev` above if you don't have
+`tuxedo-touchpad-switch` installed. It does **not** need PyGObject or a Plasma
+session; only the daemon does. Runs on Python 3.11 and 3.12, both checked.
+
+Worst case, if something goes really wrong: `python3 tuxedo-touchpad on --raw`
+turns the pad back on, and a reboot resets the firmware anyway.
 
 ## Use
 
