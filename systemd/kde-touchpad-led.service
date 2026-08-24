@@ -1,0 +1,20 @@
+[Unit]
+Description=Mirror KDE's touchpad state onto the Uniwill touchpad disabled-LED
+Documentation=https://github.com/rcspam/tuxedo-touchpad-led-fix
+PartOf=graphical-session.target
+After=plasma-kwin_wayland.service
+# graphical-session.target is shared with GNOME and others, and only Plasma
+# exposes the KWin interface this needs. X11 needs nothing: the LED already
+# follows the toggle there. Repeated conditions are ANDed.
+ConditionEnvironment=XDG_CURRENT_DESKTOP=KDE
+ConditionEnvironment=XDG_SESSION_TYPE=wayland
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/tuxedo-touchpad-led daemon
+Restart=on-failure
+RestartSec=5
+Slice=session.slice
+
+[Install]
+WantedBy=graphical-session.target

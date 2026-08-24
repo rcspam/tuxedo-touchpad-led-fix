@@ -1,0 +1,444 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# tuxedo-touchpad-led — make the touchpad disabled-LED work on KDE Plasma Wayland
+# Copyright (C) 2026 rcspam <rcspams@gmail.com>
+#
+# On Uniwill/TongFang laptops sold by TUXEDO, the small LED in the touchpad's
+# top-left corner is driven by the touchpad firmware, not by the kernel: it
+# never appears in /sys/class/leds. The only way to light it is the HID
+# "Surface Switch / Button Switch" feature report.
+#
+# The corner double-tap is not a touchpad gesture. The EC reports it,
+# tuxedo-drivers turns it into KEY_F21, xkeyboard-config maps that to
+# XF86TouchpadToggle, and KWin disables the touchpad at the libinput level.
+# Nothing ever tells the firmware, so the LED stays dark.
+#
+# This tool closes that gap by mirroring KWin's view of the touchpad into the
+# firmware. See docs/FINDINGS.md for how each step was established.
+
+"""Usage:
+  tuxedo-touchpad-led daemon            mirror KWin's touchpad state to the LED
+  tuxedo-touchpad-led on [--raw]        light the LED (disables the touchpad)
+  tuxedo-touchpad-led off [--raw]       clear the LED (enables the touchpad)
+  tuxedo-touchpad-led toggle [--raw]    flip whichever state is current
+  tuxedo-touchpad-led status            show LED, firmware, KWin and service state
+  tuxedo-touchpad-led probe [SECONDS]   watch the feature reports, for diagnosis
+
+By default on/off/toggle go through KWin, so System Settings, the corner
+double-tap and this command all agree and the daemon needs no special casing.
+--raw writes the HID report directly: useful from a tty or when diagnosing, but
+the daemon will realign the firmware on KWin within POLL_SECONDS unless it is
+stopped first.
+"""
+
+import fcntl
+import os
+import subprocess
+import sys
+import time
+
+# --- device constants ------------------------------------------------------
+
+HID_PHYS_MATCH = 'UNIW0001'      # Uniwill I2C touchpad
+LED_ON, LED_OFF = 0x00, 0x03     # value written to the switch report
+
+USAGE_PAGE_DIGITIZER = 0x0D
+USAGE_SURFACE_SWITCH = 0x57
+USAGE_BUTTON_SWITCH = 0x58
+
+POLL_SECONDS = 2
+WAIT_ATTEMPTS, WAIT_INTERVAL = 10, 1.5   # let KWin appear at session start
+
+KCMINPUTRC = os.path.expanduser('~/.config/kcminputrc')
+SERVICE = 'kde-touchpad-led.service'
+
+
+def _ioc_set(length):
+    return (3 << 30) | (length << 16) | (0x48 << 8) | 0x06   # HIDIOCSFEATURE
+
+
+def _ioc_get(length):
+    return (3 << 30) | (length << 16) | (0x48 << 8) | 0x07   # HIDIOCGFEATURE
+
+
+def log(message):
+    print(message, flush=True)
+
+
+# --- HID discovery ---------------------------------------------------------
+
+def find_hidraw():
+    """Locate the touchpad's hidraw node. Returns (devnode, syspath)."""
+    for name in sorted(os.listdir('/sys/class/hidraw')):
+        uevent = f'/sys/class/hidraw/{name}/device/uevent'
+        try:
+            with open(uevent) as handle:
+                if HID_PHYS_MATCH in handle.read():
+                    return f'/dev/{name}', f'/sys/class/hidraw/{name}/device'
+        except OSError:
+            continue
+    return None, None
+
+
+def find_switch_report(syspath):
+    """Return the report ID carrying Surface Switch + Button Switch.
+
+    Do not hard-code it. The ID differs between touchpad revisions, and on at
+    least the PH6PG01 pad the REPORT_ID item is emitted *after* the two switch
+    usages. A parser that returns the report ID current when it first sees the
+    usage yields the previous group, which is Input Mode: writing there flips
+    the pad into mouse-emulation mode and leaves the LED untouched.
+    """
+    try:
+        with open(f'{syspath}/report_descriptor', 'rb') as handle:
+            descriptor = handle.read()
+    except OSError:
+        return None
+
+    index, page, report_id = 0, None, None
+    pending = set()
+    while index < len(descriptor):
+        prefix = descriptor[index]
+        size = prefix & 3
+        size = 4 if size == 3 else size
+        item_type = (prefix >> 2) & 3
+        tag = (prefix >> 4) & 0xF
+        value = int.from_bytes(descriptor[index + 1:index + 1 + size], 'little') if size else 0
+
+        if item_type == 1 and tag == 0:
+            page = value
+        elif item_type == 1 and tag == 8:
+            report_id = value
+        elif item_type == 2 and tag == 0 and page == USAGE_PAGE_DIGITIZER:
+            pending.add(value)
+        elif item_type == 0:
+            if tag == 0xB and {USAGE_SURFACE_SWITCH, USAGE_BUTTON_SWITCH} <= pending:
+                return report_id             # FEATURE closing the switch group
+            if tag in (0x8, 0x9, 0xB):       # INPUT / OUTPUT / FEATURE
+                pending.clear()
+        index += 1 + size
+    return None
+
+
+class Firmware:
+    """Read and write the touchpad's surface/button switch."""
+
+    def __init__(self):
+        self.fd = None
+        self.report_id = None
+        self.devnode = None
+        self.open()
+
+    def open(self):
+        self.close()
+        devnode, syspath = find_hidraw()
+        if not devnode:
+            return False
+        report_id = find_switch_report(syspath)
+        if report_id is None:
+            log(f'{devnode}: no switch report in the HID descriptor')
+            return False
+        try:
+            self.fd = os.open(devnode, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError as err:
+            log(f'{devnode}: {err}')
+            return False
+        self.devnode, self.report_id = devnode, report_id
+        return True
+
+    def close(self):
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+        self.fd = None
+
+    def read(self):
+        for _ in range(3):
+            try:
+                buf = bytearray([self.report_id, 0])
+                fcntl.ioctl(self.fd, _ioc_get(2), buf)
+                return buf[1]
+            except OSError:
+                time.sleep(0.05)
+        return None
+
+    def write(self, value):
+        """Push a value, reopening once if the device went away (resume)."""
+        for attempt in (1, 2):
+            if self.fd is None and not self.open():
+                return False
+            try:
+                fcntl.ioctl(self.fd, _ioc_set(2), bytearray([self.report_id, value]))
+                return True
+            except OSError as err:
+                if attempt == 1:
+                    self.close()
+                else:
+                    log(f'write failed: {err}')
+        return False
+
+    def apply(self, touchpad_enabled):
+        return self.write(LED_OFF if touchpad_enabled else LED_ON)
+
+
+# --- compositor ------------------------------------------------------------
+
+class KWin:
+    """KWin's view of the touchpad. Only present in a Plasma session."""
+
+    IFACE = 'org.kde.KWin.InputDevice'
+    ROOT = '/org/kde/KWin/InputDevice'
+
+    def __init__(self):
+        import gi
+        gi.require_version('Gio', '2.0')
+        from gi.repository import Gio, GLib
+        self.Gio, self.GLib = Gio, GLib
+        self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        self.path = self._find()
+
+    def _proxy(self, path, iface):
+        return self.Gio.DBusProxy.new_sync(
+            self.bus, self.Gio.DBusProxyFlags.NONE, None,
+            'org.kde.KWin', path, iface, None)
+
+    def get(self, path, name):
+        return self._proxy(path, 'org.freedesktop.DBus.Properties').call_sync(
+            'Get', self.GLib.Variant('(ss)', (self.IFACE, name)),
+            self.Gio.DBusCallFlags.NONE, 2000, None)[0]
+
+    def _find(self):
+        """The pad exposes two KWin objects, "... Mouse" and "... Touchpad",
+        both carrying the same vendor id. Matching the vendor alone picks the
+        mouse and silently disables the wrong device."""
+        xml = self._proxy(self.ROOT, 'org.freedesktop.DBus.Introspectable').call_sync(
+            'Introspect', None, self.Gio.DBusCallFlags.NONE, 2000, None)[0]
+        for line in xml.splitlines():
+            if '<node name=' not in line:
+                continue
+            path = f"{self.ROOT}/{line.split('\"')[1]}"
+            try:
+                name = self.get(path, 'name')
+            except self.GLib.Error:
+                continue
+            if HID_PHYS_MATCH in name and 'Touchpad' in name:
+                return path
+        return None
+
+    def enabled(self):
+        try:
+            return bool(self.get(self.path, 'enabled'))
+        except self.GLib.Error:
+            self.path = self._find()
+            return None
+
+    def set_enabled(self, value):
+        self._proxy(self.path, 'org.freedesktop.DBus.Properties').call_sync(
+            'Set', self.GLib.Variant('(ssv)',
+                                     (self.IFACE, 'enabled', self.GLib.Variant('b', value))),
+            self.Gio.DBusCallFlags.NONE, 2000, None)
+
+
+def try_kwin():
+    try:
+        kwin = KWin()
+        return kwin if kwin.path else None
+    except Exception:
+        return None
+
+
+# --- commands --------------------------------------------------------------
+
+def cmd_daemon(firmware):
+    from gi.repository import GLib
+
+    # KWin may not be up yet at session start, so retry for a while. Finding no
+    # KWin at all is not a failure: the session may be GNOME, X11 or a tty, and
+    # systemd must not restart us in a loop over that.
+    kwin = None
+    for attempt in range(WAIT_ATTEMPTS):
+        kwin = try_kwin()
+        if kwin:
+            break
+        if attempt + 1 < WAIT_ATTEMPTS:
+            time.sleep(WAIT_INTERVAL)
+    if kwin is None:
+        log(f'no KWin touchpad after {int(WAIT_ATTEMPTS * WAIT_INTERVAL)}s; '
+            'not a Plasma session, exiting')
+        firmware.apply(True)
+        return 0
+
+    log(f'touchpad: {firmware.devnode}, switch report {firmware.report_id}')
+    log(f'KWin device: {kwin.path}')
+
+    state = {'last': None}
+
+    def sync(*_args):
+        enabled = kwin.enabled()
+        if enabled is None or enabled == state['last']:
+            return True
+        state['last'] = enabled
+        firmware.apply(enabled)
+        log(f'touchpad {"enabled" if enabled else "disabled"} '
+            f'→ LED {"off" if enabled else "on"}')
+        return True
+
+    sync()
+
+    # kcminputrc is rewritten within milliseconds of a toggle. KWin emits no
+    # PropertiesChanged for its InputDevice objects and does not call
+    # org.kde.osdService either, so there is no signal to subscribe to; the
+    # timer is the backstop.
+    from gi.repository import Gio
+    monitor = Gio.File.new_for_path(KCMINPUTRC).monitor_file(Gio.FileMonitorFlags.NONE, None)
+    monitor.connect('changed', lambda *_: sync())
+    GLib.timeout_add_seconds(POLL_SECONDS, sync)
+
+    loop = GLib.MainLoop()
+
+    def stop():
+        """Never leave the touchpad disabled behind us."""
+        firmware.apply(True)
+        loop.quit()
+        return GLib.SOURCE_REMOVE
+
+    for signal_number in (2, 15):    # SIGINT, SIGTERM
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal_number, stop)
+
+    log('running')
+    loop.run()
+    firmware.apply(True)
+    return 0
+
+
+def service_state():
+    try:
+        return subprocess.run(['systemctl', '--user', 'is-active', SERVICE],
+                              capture_output=True, text=True, timeout=3).stdout.strip()
+    except Exception:
+        return ''
+
+
+def cmd_status(firmware):
+    value = firmware.read()
+    lit = value == LED_ON
+    print(f'device     : {firmware.devnode}, switch report {firmware.report_id}')
+    print(f'LED        : {"on" if lit else "off"} (report value 0x{value:02X})')
+    print(f'touchpad   : {"disabled" if lit else "enabled"} at the firmware level')
+    kwin = try_kwin()
+    if kwin:
+        print(f'KWin       : touchpad {"enabled" if kwin.enabled() else "disabled"}')
+    else:
+        print('KWin       : unreachable (not a Plasma session)')
+    print(f'service    : {service_state() or "unknown"}')
+    return 0
+
+
+def cmd_set(firmware, action, raw):
+    if action == 'toggle':
+        action = 'off' if firmware.read() == LED_ON else 'on'
+    led_on = action == 'on'
+
+    if not raw:
+        kwin = try_kwin()
+        if kwin:
+            kwin.set_enabled(not led_on)      # LED lit  <=>  touchpad disabled
+            print(f'KWin: touchpad {"disabled" if led_on else "enabled"}; '
+                  f'the daemon turns the LED {"on" if led_on else "off"}')
+            return 0
+        print('KWin unreachable, writing the HID report directly', file=sys.stderr)
+
+    firmware.write(LED_ON if led_on else LED_OFF)
+    print(f'firmware: report {firmware.report_id} = 0x{firmware.read():02X} '
+          f'(LED {"on" if led_on else "off"})')
+    if not raw and service_state() == 'active':
+        print(f'note: {SERVICE} is running and will realign within '
+              f'{POLL_SECONDS}s', file=sys.stderr)
+    return 0
+
+
+def cmd_probe(firmware, seconds):
+    """Watch the switch report while the user exercises the hardware.
+
+    Useful to answer, on an unknown machine: does the corner double-tap reach
+    the firmware, or only the compositor?
+    """
+    kwin = try_kwin()
+    print(f"session : {os.environ.get('XDG_SESSION_TYPE', '?')} / "
+          f"{os.environ.get('XDG_CURRENT_DESKTOP', '?')}")
+    print(f'kernel  : {os.uname().release}')
+    print(f'device  : {firmware.devnode}, switch report {firmware.report_id}')
+    print(f'value   : 0x{firmware.read():02X}')
+    if kwin:
+        print(f'KWin    : {kwin.path}, enabled={kwin.enabled()}')
+    else:
+        print('KWin    : unreachable')
+
+    print(f'\nWatching for {seconds}s — double-tap the top-left corner now.\n')
+    last_report = firmware.read()
+    last_kwin = kwin.enabled() if kwin else None
+    start = time.time()
+    changes = 0
+    while time.time() - start < seconds:
+        value = firmware.read()
+        if value is not None and value != last_report:
+            changes += 1
+            print(f'  [{time.time() - start:5.1f}s] firmware 0x{last_report:02X} '
+                  f'-> 0x{value:02X}')
+            last_report = value
+        if kwin:
+            now = kwin.enabled()
+            if now is not None and now != last_kwin:
+                changes += 1
+                print(f'  [{time.time() - start:5.1f}s] KWin enabled '
+                      f'{last_kwin} -> {now}')
+                last_kwin = now
+        time.sleep(0.25)
+
+    print(f'\n{changes} change(s).')
+    if changes == 0:
+        print('The gesture reached neither the firmware nor the compositor.')
+    if firmware.read() != LED_OFF:
+        firmware.write(LED_OFF)
+        print('Touchpad restored.')
+    return 0
+
+
+# --- entry point -----------------------------------------------------------
+
+def main(argv):
+    options = argv[1:]
+    if {'-h', '--help', 'help'} & set(options):
+        print(__doc__.strip())
+        return 0
+
+    args = [a for a in options if not a.startswith('-')]
+    raw = '--raw' in options
+    action = args[0] if args else 'status'
+
+    if action not in ('daemon', 'on', 'off', 'toggle', 'status', 'probe'):
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+
+    firmware = Firmware()
+    if firmware.fd is None:
+        print('No Uniwill touchpad found. Is this the right machine, and does '
+              'your user have write access to /dev/hidraw*? See udev/.',
+              file=sys.stderr)
+        return 1
+
+    if action == 'daemon':
+        return cmd_daemon(firmware)
+    if action == 'status':
+        return cmd_status(firmware)
+    if action == 'probe':
+        seconds = next((int(a) for a in args[1:] if a.isdigit()), 25)
+        return cmd_probe(firmware, seconds)
+    return cmd_set(firmware, action, raw)
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))

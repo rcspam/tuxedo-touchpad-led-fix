@@ -1,0 +1,7 @@
+# Let an unprivileged session write the touchpad's HID feature reports.
+#
+# Skip this file if tuxedo-touchpad-switch is installed: it ships the same
+# rule, and that is the one genuinely useful thing it still does on KDE.
+
+KERNELS=="i2c-UNIW0001:00", SUBSYSTEMS=="i2c", DRIVERS=="i2c_hid", ATTRS{name}=="UNIW0001:00", SUBSYSTEM=="hidraw", MODE="0622"
+KERNELS=="i2c-UNIW0001:00", SUBSYSTEMS=="i2c", DRIVERS=="i2c_hid_acpi", ATTRS{name}=="UNIW0001:00", SUBSYSTEM=="hidraw", MODE="0622"
