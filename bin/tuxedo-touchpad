@@ -165,15 +165,16 @@ def find_switch_report(syspath):
 class Firmware:
     """Read and write the touchpad's surface/button switch."""
 
-    def __init__(self):
+    def __init__(self, devnode=None, syspath=None):
         self.fd = None
         self.report_id = None
         self.devnode = None
+        self.forced = (devnode, syspath) if devnode else None
         self.open()
 
     def open(self):
         self.close()
-        devnode, syspath = find_hidraw()
+        devnode, syspath = self.forced if self.forced else find_hidraw()
         if not devnode:
             return False
         report_id = find_switch_report(syspath)
@@ -499,7 +500,7 @@ def cmd_check():
         print('Install the udev rule (make udev) and replug or reboot, then retry.')
         return 1
 
-    firmware = Firmware()
+    firmware = Firmware(pad['devnode'], pad['syspath'])
     if firmware.fd is None:
         print('\nCould not open the touchpad.')
         return 1

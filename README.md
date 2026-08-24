@@ -151,7 +151,7 @@ GNOME on Wayland is in the same hole KDE was, but I can't test it.
 
 ## Credits
 
-Diagnosed and written with Claude (Anthropic), in about a quarter of an hour of
+Diagnosed and written with Claude (Anthropic), in about an hour of
 actual work: reading the HID report descriptor, tracing the corner tap through
 libinput to KWin, digging up the commit that removed KDE support, and writing
 the daemon.
