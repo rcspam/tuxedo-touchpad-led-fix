@@ -94,16 +94,39 @@ and you don't have to stop the daemon. Add `--raw` to write the HID report
 directly — handy from a tty or when diagnosing, but then the daemon will pull
 the firmware back in line within two seconds unless you stop it.
 
-## Check your hardware first
+## On other hardware — run `check` first
 
-Before anything else, see whether the LED responds at all:
+If you have a Pulse, a Stellaris, a Gen10 or any other Uniwill pad, you don't
+need to install anything to find out whether this can work. Grab the one file
+and run it:
 
 ```
-python3 -c 'import fcntl,os;fcntl.ioctl(os.open("/dev/hidraw0",os.O_WRONLY),0xC0024806,bytearray([7,0x00]))'
+curl -O https://raw.githubusercontent.com/rcspam/tuxedo-touchpad-led-fix/master/bin/tuxedo-touchpad
+python3 tuxedo-touchpad check
 ```
 
-Light comes on, pad goes dead. Same line with `0x03` puts it back. If that does
-nothing, your report ID is probably not 7 — run `probe`, it finds it for you.
+It scans every hidraw node for a Surface/Button Switch report, finds the report
+ID on its own, disables the pad for five seconds so you can watch the corner,
+puts it back, and prints a block like this:
+
+```
+machine   : TUXEDO InfinityBook Pro Gen8 (MK2), board PH6PG01_PH6PG71
+kernel    : 7.0.0-108029-tuxedo
+session   : wayland / KDE
+touchpad  : UNIW0001:00 (i2c-UNIW0001:00)
+report ID : 7
+write     : 0x00 -> read back 0x00
+result    : LED works
+```
+
+Paste that into an issue here, whatever it says. "LED did NOT light" on a
+Stellaris is just as useful to me as a success — it's the only way this grows
+past the one machine I own.
+
+Two things to know: the daemon has to be stopped for the test (`check` refuses
+to run otherwise, it would undo itself within two seconds), and you need write
+access to `/dev/hidraw*`, which means `make udev` if you don't have
+`tuxedo-touchpad-switch` installed.
 
 ## Not covered
 
