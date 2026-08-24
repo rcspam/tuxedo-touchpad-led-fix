@@ -18,8 +18,8 @@ That's one laptop and one touchpad revision. A Pulse, a Stellaris, a Gen10 or a
 non-TUXEDO Uniwill/TongFang machine may well behave differently, and I have no
 way to check. The tool looks up the hidraw node and the switch report ID at
 runtime instead of hard-coding them, so it has a decent chance of travelling —
-but that's an argument, not evidence. Run `tuxedo-touchpad probe` first, and
-tell me how it went either way.
+but that's an argument, not evidence. Run `tuxedo-touchpad check` first — see
+below — and tell me how it went either way.
 
 ## Why it's broken
 
@@ -146,8 +146,6 @@ the daemon.
 
 `Xartos/tuxedo-touchpad-switch`, branch `add-touchpad-toggle-update`, got to a
 standalone toggle binary two years earlier. Different approach, same problem.
-
-The udev rule is TUXEDO's, from `tuxedo-touchpad-switch`.
 
 ## Licence
 
