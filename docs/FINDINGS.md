@@ -203,6 +203,27 @@ Why the LED works on X11. `kded_touchpad` explains it up to August 2025, but
 the KDE code is gone now, so in principle X11 should be dark too. Possibly my
 X11 memory predates the update.
 
+Two sessions, one firmware. The daemon runs once per session and the report it
+writes belongs to the machine, so a session left open in the background keeps
+imposing its own idea of the state, and it can switch off a pad the person in
+front is using. Logging out is fine, the service stops with the graphical
+session. It is fast user switching that would bite. The official package
+autostarts once per session and has carried the same hole from the start, so
+this is written down rather than fixed.
+
+The fix is known if it ever does bite. logind publishes whether a session is
+the one in the foreground, on the system bus, readable without privileges:
+
+```
+$ busctl --system get-property org.freedesktop.login1 \
+    /org/freedesktop/login1/session/auto org.freedesktop.login1.Session Active
+b true
+```
+
+The daemon would skip the write when that comes back false. One rule matters
+there: if logind cannot answer, treat the session as active. A daemon that goes
+quiet out of caution is precisely the bug that cost a day.
+
 There's also a [report on
 r/tuxedocomputers](https://www.reddit.com/r/tuxedocomputers/comments/1rtj3c9/numlockw_status_causes_touchpad_led_to_pulse/)
 where polling numlock state over evdev makes the touchpad LED pulse, and the
