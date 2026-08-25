@@ -35,6 +35,15 @@ sat there doing nothing while systemd still reported it `active`. `sync()` now
 swallows everything and always returns True. A service being active proves
 nothing, which is why every transition is logged.
 
+**A mirror that never looks at what it mirrors will drift.** `sync()` compared
+KWin against its own memory of what it had last written, and nothing ever read
+the firmware back. Anything else touching the same report, `--raw` and a resume
+included, left the pad disabled with the daemon certain it had done its job:
+LED lit, pointer dead, journal empty, README promising the opposite. The poll
+now reads the report and rewrites only on a genuine difference. Do not delete
+that read to save an ioctl. It costs 0.86 ms and it is the only thing making
+the documented behaviour true.
+
 **`write()` on a hidraw node is not the same as a feature report.** A plain
 write sends an *output* report; the device accepts it without complaint and
 ignores it. Only `ioctl(HIDIOCSFEATURE)` reaches the switch. That silent

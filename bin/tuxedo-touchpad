@@ -350,7 +350,40 @@ def cmd_daemon(firmware):
     log(f'touchpad: {firmware.devnode}, switch report {firmware.report_id}')
     log(f'KWin device: {kwin.path}')
 
-    state = {'last': None, 'path': None}
+    state = {'last': None, 'path': None, 'drift': None}
+
+    def correct_drift(enabled):
+        """KWin has not moved, but the firmware may have.
+
+        sync() used to return early in that case, trusting its own memory of
+        what it had written. Nothing else is supposed to touch the report,
+        except that `--raw`, a resume and any other tool all do, and the daemon
+        then sat on a stale belief while the pad stayed disabled behind its
+        back: LED lit, pointer dead, KWin convinced all was well. Reading the
+        report costs under a millisecond, so read it rather than assume.
+
+        This also removes the assumption that a resume always republishes the
+        device under a new object path, which is what `moved` relies on. That
+        held on every resume measured here, but it is a KWin implementation
+        detail, and the firmware is the thing we actually care about.
+
+        A read that fails returns None: write nothing rather than guess. The
+        drift is logged once per episode, so a firmware that keeps refusing a
+        value cannot flood the journal every POLL_SECONDS.
+        """
+        current = firmware.read()
+        if current is None:
+            return
+        want = PAD_ON if enabled else PAD_OFF
+        if current == want:
+            state['drift'] = None
+            return
+        firmware.apply(enabled)
+        if state['drift'] != current:
+            state['drift'] = current
+            log(f'firmware drifted to 0x{current:02X} while KWin still reports '
+                f'the touchpad {"enabled" if enabled else "disabled"}, '
+                f're-applied 0x{want:02X}')
 
     def sync(*_args):
         """Must always return True and never raise.
@@ -369,8 +402,9 @@ def cmd_daemon(firmware):
             # if KWin reports the same value as before.
             moved = kwin.path != state['path']
             if enabled == state['last'] and not moved:
+                correct_drift(enabled)
                 return True
-            state['last'], state['path'] = enabled, kwin.path
+            state['last'], state['path'], state['drift'] = enabled, kwin.path, None
             firmware.apply(enabled)
             log(f'touchpad {"enabled" if enabled else "disabled"} '
                 f'-> LED {"off" if enabled else "on"}'

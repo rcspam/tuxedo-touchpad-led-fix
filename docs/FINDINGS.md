@@ -162,8 +162,40 @@ whatever the type. And a service being `active` says nothing about it working,
 which is exactly why the daemon logs each transition.
 
 The device also comes back under a fresh object path after a resume, and the
-firmware returns to its default, so the daemon now re-applies the state when
-the path changes rather than trusting its own memory of it.
+firmware returns to its default, so the daemon re-applies the state when the
+path changes rather than trusting its own memory of it. That turned out not to
+be enough either, for the reason below.
+
+## Mirroring is not the same as knowing
+
+The daemon copied KWin's view into the firmware and never once read the
+firmware back. That holds only while it is the only writer, and it never was:
+`--raw`, a resume and any other tool on the machine all write the same report.
+The loop could not notice, because it compared KWin to its own memory of what
+it had last written, and both agreed.
+
+Measured with the service up:
+
+```
+off --raw : report 7 = 0x00
++5s       : report 7 still 0x00, KWin still enabled, daemon journal empty
+```
+
+Touchpad disabled at the firmware, LED lit, pointer dead, compositor convinced
+nothing was wrong, and the README promising all the while that the daemon would
+put it back within two seconds.
+
+Reading the report on every tick turns out to cost nothing worth counting: 40
+reads at 2 Hz, no failure, 0.86 ms median, 12.9 ms worst. So the daemon now
+compares the firmware against KWin instead of against its own memory, and only
+writes when they differ. A read that fails returns None and it writes nothing,
+because guessing is what got us here. The drift is logged once per episode
+rather than every two seconds, so a pad that refuses a value cannot drown the
+journal.
+
+That also retires the assumption above about object paths. It was true on every
+resume measured here, but it is a KWin implementation detail, and the firmware
+is the thing actually worth watching.
 
 ## Still open
 
