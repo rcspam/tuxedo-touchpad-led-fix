@@ -84,6 +84,35 @@ make udev
 
 Remove everything with `make uninstall`.
 
+### For everyone on the machine
+
+If several people log into the same laptop, install it once for all of them:
+
+```
+make install-system
+```
+
+The binary goes to `/usr/local/bin`, the unit to `/etc/systemd/user`, and
+`systemctl --global enable` turns it on for every account, including ones
+created later. Each account still gets its own daemon at login, because
+reaching KWin means being on that session's bus. Nothing runs as root, and a
+root service would not work anyway for the same reason.
+
+This asks for sudo, and it takes effect at the next login rather than
+immediately. If you had already run `make install`, remove your personal copy
+with `make uninstall` first: systemd prefers a unit in `~/.config/systemd/user`
+over the one in `/etc`, and `~/.local/bin` comes before `/usr/local/bin` in
+PATH, so the old copy would quietly win. `make uninstall-system` undoes it.
+
+One thing to know before you do this. The firmware is a single piece of
+hardware and sessions are not. If someone stays logged in while another person
+uses the machine, both daemons follow their own KWin and write the same report,
+so the one in the background can switch off a touchpad the person in front is
+using. Logging out properly is fine, the service stops with the graphical
+session and puts the pad back on. It is fast user switching that bites, and the
+official package has the same problem for the same reason: it autostarts once
+per session too.
+
 ## Every other machine
 
 I have no idea what a Pulse, a Stellaris, a Gen10 or a non-TUXEDO
