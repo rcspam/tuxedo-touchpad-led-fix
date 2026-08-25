@@ -146,6 +146,25 @@ board is in its DMI aliases, but it only exposes `fn_lock`,
 the touchpad LED. It isn't even loaded anyway, since the tuxedo-drivers DKMS
 stack claims the hardware first.
 
+## Resume, and a bug worth remembering
+
+After a suspend/resume the daemon looked alive and did nothing. systemd still
+reported it active, the LED simply stopped following the corner tap.
+
+KWin is gone for a few seconds after a resume, so `_find()` returned None. The
+next poll then called `get(None, 'enabled')`, which raises `TypeError` rather
+than the `GLib.Error` that was being caught. An exception escaping a GLib
+timeout callback removes the source, so the timer was never rearmed: the
+process stayed up with nothing driving it.
+
+Two lessons, both now in the code. A callback must never let anything escape,
+whatever the type. And a service being `active` says nothing about it working,
+which is exactly why the daemon logs each transition.
+
+The device also comes back under a fresh object path after a resume, and the
+firmware returns to its default, so the daemon now re-applies the state when
+the path changes rather than trusting its own memory of it.
+
 ## Still open
 
 Why the LED works on X11. `kded_touchpad` explains it up to August 2025, but

@@ -262,9 +262,16 @@ class KWin:
     def _find(self):
         """The pad exposes two KWin objects, "... Mouse" and "... Touchpad",
         both carrying the same vendor id. Matching the vendor alone picks the
-        mouse and silently disables the wrong device."""
-        xml = self._proxy(self.ROOT, 'org.freedesktop.DBus.Introspectable').call_sync(
-            'Introspect', None, self.Gio.DBusCallFlags.NONE, 2000, None)[0]
+        mouse and silently disables the wrong device.
+
+        Returns None while KWin is away, which happens for a few seconds after
+        a resume, so every caller has to cope with that.
+        """
+        try:
+            xml = self._proxy(self.ROOT, 'org.freedesktop.DBus.Introspectable').call_sync(
+                'Introspect', None, self.Gio.DBusCallFlags.NONE, 2000, None)[0]
+        except Exception:
+            return None
         for line in xml.splitlines():
             if '<node name=' not in line:
                 continue
@@ -279,9 +286,20 @@ class KWin:
         return None
 
     def enabled(self):
+        """None means "cannot tell right now", never an exception.
+
+        After a resume KWin is briefly gone and its device objects come back
+        under new paths. An earlier version let a TypeError escape from here
+        when the path was None, which killed the GLib timer: the service
+        stayed active and silently stopped mirroring anything.
+        """
+        if self.path is None:
+            self.path = self._find()
+            if self.path is None:
+                return None
         try:
             return bool(self.get(self.path, 'enabled'))
-        except self.GLib.Error:
+        except Exception:
             self.path = self._find()
             return None
 
@@ -324,16 +342,33 @@ def cmd_daemon(firmware):
     log(f'touchpad: {firmware.devnode}, switch report {firmware.report_id}')
     log(f'KWin device: {kwin.path}')
 
-    state = {'last': None}
+    state = {'last': None, 'path': None}
 
     def sync(*_args):
-        enabled = kwin.enabled()
-        if enabled is None or enabled == state['last']:
-            return True
-        state['last'] = enabled
-        firmware.apply(enabled)
-        log(f'touchpad {"enabled" if enabled else "disabled"} '
-            f'→ LED {"off" if enabled else "on"}')
+        """Must always return True and never raise.
+
+        An exception escaping a GLib callback removes the source, and the
+        daemon then sits there doing nothing while systemd still calls it
+        active. That is exactly what used to happen after a resume.
+        """
+        try:
+            enabled = kwin.enabled()
+            if enabled is None:
+                state['path'] = None      # KWin is away; re-apply when it returns
+                return True
+            # After a resume the device comes back under a new object path and
+            # the firmware is back to its default, so push the state again even
+            # if KWin reports the same value as before.
+            moved = kwin.path != state['path']
+            if enabled == state['last'] and not moved:
+                return True
+            state['last'], state['path'] = enabled, kwin.path
+            firmware.apply(enabled)
+            log(f'touchpad {"enabled" if enabled else "disabled"} '
+                f'-> LED {"off" if enabled else "on"}'
+                + (f' (device now {kwin.path})' if moved else ''))
+        except Exception as err:
+            log(f'sync failed, will retry: {err!r}')
         return True
 
     sync()

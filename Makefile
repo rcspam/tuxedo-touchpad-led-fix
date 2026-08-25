@@ -9,7 +9,8 @@ install:
 	install -Dm755 bin/tuxedo-touchpad $(BINDIR)/tuxedo-touchpad
 	install -Dm644 systemd/tuxedo-touchpad.service $(UNITDIR)/tuxedo-touchpad.service
 	systemctl --user daemon-reload
-	systemctl --user enable --now tuxedo-touchpad.service
+	systemctl --user enable tuxedo-touchpad.service
+	systemctl --user restart tuxedo-touchpad.service
 	@echo
 	@$(BINDIR)/tuxedo-touchpad status
 
