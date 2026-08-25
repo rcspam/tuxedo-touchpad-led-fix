@@ -75,11 +75,18 @@ def log(message):
 # --- HID discovery ---------------------------------------------------------
 
 def _uevent(syspath):
+    """Split on lines, not on whitespace: HID_NAME contains spaces.
+
+    The kernel writes `HID_NAME=UNIW0001:00 093A:0274`, and splitting on
+    whitespace kept only the first half, dropping the vendor:product id. That
+    id is the one thing worth comparing when someone reports another machine.
+    """
     try:
         with open(f'{syspath}/uevent') as handle:
-            return dict(line.split('=', 1) for line in handle.read().split() if '=' in line)
+            lines = handle.read().splitlines()
     except OSError:
         return {}
+    return dict(line.split('=', 1) for line in lines if '=' in line)
 
 
 def find_touchpads():
@@ -451,38 +458,97 @@ def service_state():
 
 def cmd_status(firmware):
     value = firmware.read()
+    print(f'device     : {firmware.devnode}, switch report {firmware.report_id}')
     if value is None:
-        print(f'device     : {firmware.devnode}, switch report {firmware.report_id}')
         print('touchpad   : cannot read the switch report right now')
         print('LED        : unknown')
     else:
         lit = value == PAD_OFF
-        print(f'device     : {firmware.devnode}, switch report {firmware.report_id}')
         print(f'touchpad   : {"off" if lit else "on"} at the firmware level '
               f'(report value 0x{value:02X})')
         print(f'LED        : {"on" if lit else "off"}')
+
     kwin = try_kwin()
-    if kwin:
-        print(f'KWin       : touchpad {"enabled" if kwin.enabled() else "disabled"}')
-    else:
+    # enabled() returns None for "cannot tell right now", which this used to
+    # print as "disabled": a guess dressed up as a reading.
+    enabled = kwin.enabled() if kwin else None
+    if kwin is None:
         print('KWin       : unreachable (not a Plasma session)')
-    print(f'service    : {service_state() or "unknown"}')
+    elif enabled is None:
+        print('KWin       : found, but not answering right now')
+    else:
+        print(f'KWin       : touchpad {"enabled" if enabled else "disabled"}')
+
+    active = service_state()
+    print(f'service    : {active or "unknown"}')
+
+    # Say it outright instead of leaving the reader to compare two lines. The
+    # two sides disagreeing is the visible symptom of every way this tool has
+    # gone wrong so far, and probably of the ones not found yet.
+    firmware_on = None if value is None else value != PAD_OFF
+    if firmware_on is not None and enabled is not None and enabled != firmware_on:
+        print(f'\nmismatch   : KWin has the touchpad '
+              f'{"enabled" if enabled else "disabled"} while the firmware has '
+              f'it {"on" if firmware_on else "off"}.')
+        print('             ' + (f'{SERVICE} realigns it within {POLL_SECONDS}s.'
+                                 if active == 'active'
+                                 else f'{SERVICE} is not running, so nothing will.'))
     return 0
+
+
+def touchpad_is_on(kwin, firmware):
+    """True, False, or None when nobody can say.
+
+    KWin is the authority on Wayland. The firmware trails it for a couple of
+    seconds after a --raw write or a resume, so deciding anything from the
+    firmware while KWin is answering flips the pad the wrong way round.
+    """
+    if kwin:
+        enabled = kwin.enabled()
+        if enabled is not None:
+            return enabled
+    value = firmware.read()
+    return None if value is None else value != PAD_OFF
 
 
 def cmd_set(firmware, action, raw):
     """action is about the touchpad: 'on' enables it, which puts the LED out."""
+    kwin = None if raw else try_kwin()
+
     if action == 'toggle':
-        action = 'on' if firmware.read() == PAD_OFF else 'off'
+        # This used to read the firmware even when going through KWin, and
+        # compared the result to PAD_OFF without testing for None. A failed
+        # read, which this I2C bus does produce, turned every toggle into off.
+        current = touchpad_is_on(kwin, firmware)
+        if current is None:
+            print('cannot tell whether the touchpad is on or off, from KWin or '
+                  'from the firmware; refusing to guess', file=sys.stderr)
+            return 1
+        action = 'off' if current else 'on'
     enable = action == 'on'
 
-    if not raw:
-        kwin = try_kwin()
-        if kwin:
+    # A failed call inside enabled() clears the path, so check it again rather
+    # than trust what try_kwin() found a few lines ago.
+    if kwin and kwin.path:
+        try:
             kwin.set_enabled(enable)
-            print(f'KWin: touchpad {"enabled" if enable else "disabled"}; '
-                  f'the daemon turns the LED {"off" if enable else "on"}')
+        except Exception as err:
+            print(f'KWin refused the change ({err}), writing the HID report '
+                  'directly', file=sys.stderr)
+        else:
+            running = service_state() == 'active'
+            if running:
+                tail = (f'the daemon turns the LED {"off" if enable else "on"} '
+                        f'within {POLL_SECONDS}s')
+            else:
+                tail = (f'{SERVICE} is not running, so nothing writes the '
+                        'firmware and the LED will not move')
+            print(f'KWin: touchpad {"enabled" if enable else "disabled"}; {tail}')
+            if not running:
+                print('start it, or use --raw to drive the firmware directly',
+                      file=sys.stderr)
             return 0
+    elif not raw:
         print('KWin unreachable, writing the HID report directly', file=sys.stderr)
 
     firmware.apply(enable)
@@ -490,9 +556,12 @@ def cmd_set(firmware, action, raw):
     shown = f'0x{now:02X}' if now is not None else 'unreadable'
     print(f'firmware: report {firmware.report_id} = {shown} '
           f'(touchpad {"on" if enable else "off"}, LED {"off" if enable else "on"})')
-    if not raw and service_state() == 'active':
-        print(f'note: {SERVICE} is running and will realign within '
-              f'{POLL_SECONDS}s', file=sys.stderr)
+    # Every branch that gets here has written the firmware behind KWin's back,
+    # so every branch needs the warning. The condition used to carry `not raw`,
+    # which fired it everywhere except the one case it was written for.
+    if service_state() == 'active':
+        print(f'note: {SERVICE} is running and will realign the firmware with '
+              f'KWin within {POLL_SECONDS}s', file=sys.stderr)
     return 0
 
 
@@ -523,16 +592,22 @@ def cmd_probe(firmware, seconds):
     while time.time() - start < seconds:
         value = firmware.read()
         if value is not None and value != last_report:
-            changes += 1
-            print(f'  [{time.time() - start:5.1f}s] firmware 0x{last_report:02X} '
-                  f'-> 0x{value:02X}')
+            # A first read that failed leaves last_report at None, and
+            # formatting None as 0x%02X raises: probe would crash on exactly
+            # the hardware it exists to diagnose. Adopt the value, count
+            # nothing, since there is no transition to report.
+            if last_report is not None:
+                changes += 1
+                print(f'  [{time.time() - start:5.1f}s] firmware 0x{last_report:02X} '
+                      f'-> 0x{value:02X}')
             last_report = value
         if kwin:
             now = kwin.enabled()
             if now is not None and now != last_kwin:
-                changes += 1
-                print(f'  [{time.time() - start:5.1f}s] KWin enabled '
-                      f'{last_kwin} -> {now}')
+                if last_kwin is not None:
+                    changes += 1
+                    print(f'  [{time.time() - start:5.1f}s] KWin enabled '
+                          f'{last_kwin} -> {now}')
                 last_kwin = now
         time.sleep(0.25)
 
@@ -645,8 +720,13 @@ def cmd_check():
         firmware.apply(False)
         read_back = firmware.read()
         if read_back != PAD_OFF:
-            print(f'\nWrote 0x{PAD_OFF:02X} but the device reports '
-                  f'0x{read_back:02X}, so it did not take. Stopping here.')
+            # read_back can be None, and formatting that as 0x%02X raises
+            # inside a try that only catches KeyboardInterrupt. The pad would
+            # be restored by the finally, but the report would never be
+            # printed, on the machines that most need to send one.
+            got = f'0x{read_back:02X}' if read_back is not None else 'unreadable'
+            print(f'\nWrote 0x{PAD_OFF:02X} but the device reports {got}, '
+                  'so it did not take. Stopping here.')
         else:
             time.sleep(5)
     except KeyboardInterrupt:
@@ -656,8 +736,9 @@ def cmd_check():
         restored = firmware.read()
 
     if restored != original:
+        got = f'0x{restored:02X}' if restored is not None else 'unreadable'
         print(f'\nWARNING: could not restore report {firmware.report_id} '
-              f'(0x{restored:02X} instead of 0x{original:02X}).')
+              f'({got} instead of 0x{original:02X}).')
         print(f'Run: python3 {sys.argv[0]} on --raw')
     else:
         print(f'\nrestored to 0x{restored:02X}')
@@ -705,9 +786,6 @@ def main(argv):
     if action not in ('daemon', 'on', 'off', 'toggle', 'status', 'probe', 'check'):
         print(__doc__.strip(), file=sys.stderr)
         return 2
-
-    if action == 'check':
-        return cmd_check()
 
     if action == 'check':
         return cmd_check()

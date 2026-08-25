@@ -154,6 +154,11 @@ tuxedo-touchpad check          # the compatibility test described above
 `on` and `off` are about the touchpad, not the LED. The light is lit exactly
 when the pad is off, they're the same pair of bits.
 
+`status` prints what the firmware says, what KWin says, and whether the service
+is up. When those first two disagree it says so on a line of its own instead of
+leaving you to compare them, which is the quickest way to tell a real fault from
+a pad you switched off yourself and forgot about.
+
 `on`/`off`/`toggle` go through KWin by default, so everything stays consistent
 and you don't have to stop the daemon. Add `--raw` to write the HID report
 directly. Handy from a tty or when diagnosing, but then the daemon will pull
