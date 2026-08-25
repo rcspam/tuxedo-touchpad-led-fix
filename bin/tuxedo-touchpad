@@ -247,12 +247,19 @@ class KWin:
         from gi.repository import Gio, GLib
         self.Gio, self.GLib = Gio, GLib
         self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        self._proxies = {}
         self.path = self._find()
 
     def _proxy(self, path, iface):
-        return self.Gio.DBusProxy.new_sync(
-            self.bus, self.Gio.DBusProxyFlags.NONE, None,
-            'org.kde.KWin', path, iface, None)
+        """Cached: the daemon reads a property every couple of seconds for
+        weeks, and building a fresh proxy each time grew the process by about
+        10 MB a day."""
+        key = (path, iface)
+        if key not in self._proxies:
+            self._proxies[key] = self.Gio.DBusProxy.new_sync(
+                self.bus, self.Gio.DBusProxyFlags.NONE, None,
+                'org.kde.KWin', path, iface, None)
+        return self._proxies[key]
 
     def get(self, path, name):
         return self._proxy(path, 'org.freedesktop.DBus.Properties').call_sync(
@@ -267,6 +274,7 @@ class KWin:
         Returns None while KWin is away, which happens for a few seconds after
         a resume, so every caller has to cope with that.
         """
+        self._proxies.clear()
         try:
             xml = self._proxy(self.ROOT, 'org.freedesktop.DBus.Introspectable').call_sync(
                 'Introspect', None, self.Gio.DBusCallFlags.NONE, 2000, None)[0]
@@ -409,11 +417,16 @@ def service_state():
 
 def cmd_status(firmware):
     value = firmware.read()
-    lit = value == PAD_OFF
-    print(f'device     : {firmware.devnode}, switch report {firmware.report_id}')
-    print(f'touchpad   : {"off" if lit else "on"} at the firmware level '
-          f'(report value 0x{value:02X})')
-    print(f'LED        : {"on" if lit else "off"}')
+    if value is None:
+        print(f'device     : {firmware.devnode}, switch report {firmware.report_id}')
+        print('touchpad   : cannot read the switch report right now')
+        print('LED        : unknown')
+    else:
+        lit = value == PAD_OFF
+        print(f'device     : {firmware.devnode}, switch report {firmware.report_id}')
+        print(f'touchpad   : {"off" if lit else "on"} at the firmware level '
+              f'(report value 0x{value:02X})')
+        print(f'LED        : {"on" if lit else "off"}')
     kwin = try_kwin()
     if kwin:
         print(f'KWin       : touchpad {"enabled" if kwin.enabled() else "disabled"}')
@@ -439,7 +452,9 @@ def cmd_set(firmware, action, raw):
         print('KWin unreachable, writing the HID report directly', file=sys.stderr)
 
     firmware.apply(enable)
-    print(f'firmware: report {firmware.report_id} = 0x{firmware.read():02X} '
+    now = firmware.read()
+    shown = f'0x{now:02X}' if now is not None else 'unreadable'
+    print(f'firmware: report {firmware.report_id} = {shown} '
           f'(touchpad {"on" if enable else "off"}, LED {"off" if enable else "on"})')
     if not raw and service_state() == 'active':
         print(f'note: {SERVICE} is running and will realign within '
@@ -458,7 +473,9 @@ def cmd_probe(firmware, seconds):
           f"{os.environ.get('XDG_CURRENT_DESKTOP', '?')}")
     print(f'kernel  : {os.uname().release}')
     print(f'device  : {firmware.devnode}, switch report {firmware.report_id}')
-    print(f'value   : 0x{firmware.read():02X}')
+    start_value = firmware.read()
+    print('value   : ' + (f'0x{start_value:02X}' if start_value is not None
+                          else 'unreadable'))
     if kwin:
         print(f'KWin    : {kwin.path}, enabled={kwin.enabled()}')
     else:
