@@ -197,7 +197,61 @@ That also retires the assumption above about object paths. It was true on every
 resume measured here, but it is a KWin implementation detail, and the firmware
 is the thing actually worth watching.
 
+## The first drift caught in the field
+
+Everything above was measured by hand. The daemon has been running as an
+installed service since 2026-08-25 12:44, which is the first time this code
+drove the pad on its own for a working day rather than under a test.
+
+Twenty-three hours and eight suspend/resume cycles later, two of them back to
+back overnight for five hours and then ten hours and ten minutes, the process
+still holds its original PID, systemd counts no restart, and the journal for
+that invocation contains no traceback. Each resume logs the re-resolved object
+path:
+
+```
+17:06:38     touchpad enabled -> LED off (device now /org/kde/KWin/InputDevice/event5)
+18:11:00     touchpad enabled -> LED off (device now /org/kde/KWin/InputDevice/event5)
+11:24:42 +1  touchpad enabled -> LED off (device now /org/kde/KWin/InputDevice/event5)
+```
+
+Which is the callback surviving the few seconds where KWin is away, instead of
+dying on a `TypeError` and taking the timer with it.
+
+A very short wake logs nothing at all. One at 01:14:30 was followed by a
+re-suspend twenty-five seconds later, and KWin never went away long enough for
+the object path to change. Nothing to fix there, but it is worth knowing before
+you go looking for a missing line in the journal.
+
+Memory over that day says there is nothing leaking. It reads 10 936 320 bytes
+at the end against 11 083 776 at the start, so it went down rather than up, and
+the peak of 12 894 208 has not moved in twenty-two hours. An intermediate
+reading was 350 kB above the start, which looked like the beginning of
+something and was only transient allocation. Anyone measuring this wants two
+readings hours apart, not two readings an hour apart.
+
+The drift check fired too, once, at 13:08:
+
+```
+firmware drifted to 0xB3 while KWin still reports the touchpad enabled,
+re-applied 0x03
+```
+
+Nothing was running `--raw` at the time and the first suspend of the day came
+ten minutes later, so neither writer we already knew about explains it. The
+read that never seemed worth its ioctl caught something on its first real day.
+
 ## Still open
+
+What wrote `0xB3`. It is `0x03` with bits 4, 5 and 7 set on top, so the two
+bits that actually drive the surface and the buttons were still the ones the
+daemon had written, and the pad was very probably working normally at that
+moment. Either something set bits the descriptor does not document, or the
+`HIDIOCGFEATURE` came back with a byte that was never really in the report. One
+occurrence in twenty-three hours does not separate those two. The daemon compares the
+whole byte, so it rewrites and logs either way, which is the right thing to do
+while we do not know: masking the comparison down to the low two bits would
+hide the second case, and that is the case that would matter.
 
 Why the LED works on X11. `kded_touchpad` explains it up to August 2025, but
 the KDE code is gone now, so in principle X11 should be dark too. Possibly my
